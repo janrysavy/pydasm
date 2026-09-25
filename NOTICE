@@ -1,0 +1,72 @@
+# Third-party notices
+
+`pydasm` is MIT licensed (see `LICENSE`). It is a port, and it incorporates
+material and derives behaviour from work by others. This file records what, and
+what is deliberately **not** in this repository.
+
+## Ported from marty_dasm
+
+The decoder is a port of [marty_dasm](https://github.com/dbalsom/marty_dasm) by
+Daniel Balsom:
+
+- `src/pydasm/i808x/decode.py`, `modrm16.py`, `operands.py`, `gdr.py` —
+  the 8088/8086 decoder
+- `src/pydasm/nasm_formatter.py` — the NASM-style renderer
+- `src/pydasm/i808x/decode_table.py`, `src/pydasm/_mnemonics.py` — generated
+  from the crate's Rust source by `tools/gen_decode_table.py` and
+  `tools/gen_mnemonics.py`
+- `src/pydasm/cpu_common.py`, `byte_reader.py`, `instruction.py` — the shared
+  data model
+
+MIT licensed. The `capture_nasm_oracle.sh` script builds a small driver inside a
+marty_dasm checkout to capture the reference formatter's output as a test
+oracle; that driver is written by this project and removed with the checkout.
+
+## Hardware test recordings
+
+`tests/data/sst_8088.json` and `tests/data/sst_8086.json` are samples of the
+[SingleStepTests](https://github.com/SingleStepTests) suites, MIT licensed.
+They are recordings of an AMD D8088 and an Intel P80C86A, made by Daniel Balsom
+with Arduino8088/ArduinoX86 and MartyPC. The samples were produced by
+`tools/check_sst.py --make-corpus`; the full suites are not redistributed here.
+
+## Not included: the binary corpus
+
+`tests/data/` deliberately does **not** contain the third-party DOS binary the
+Ghidra corpus was taken over, nor the Ghidra listing itself, nor the Java
+exporter that produced it.
+
+**Why the listing is excluded, not just the binary.** A byte-anchored Ghidra
+listing carries the bytes it decoded. The listing this project was developed
+against reproduced 74,394 of the 86,192 load-image bytes — 86% — including the
+program's own text and copyright strings. Distributing it would republish the
+binary just as surely as distributing the file.
+
+Four tests need that corpus (`tests/test_ghidra_corpus.py`, `test_mz.py`,
+`test_frame.py`, and part of `test_cli.py` and `test_segments.py`). They are
+gated on the `corpus` fixture and **skip** when it is absent, so a clone runs
+green without it. To run them, point `PYDASM_CORPUS` at a directory containing:
+
+| File | What it is |
+| --- | --- |
+| `target.EXE` | the image, obtained by you, under whatever terms apply to it |
+| `listing.txt` | a listing for it in the format described in `docs/hardware-tests.md` |
+| `segments.json` | its load layout, from `tools/gen_segments.py` |
+
+The exporter that produces such a listing belongs to the project this was
+developed alongside. It is that project's file, it is not licensed for
+redistribution here, and it is therefore not included — pass your own to
+`tools/capture_ghidra_listing.sh`. The format it emits is documented in
+`docs/hardware-tests.md`.
+
+Nothing else in the repository depends on the corpus: 177 of 211 tests run
+without it.
+
+## Ghidra
+
+`pydasm.ghidra` reproduces the *output format* of a byte-anchored Ghidra
+exporter. It contains no Ghidra code. The formatting rules were derived by
+comparing against captured output, and the immediate signedness rule was checked
+against the x86 SLEIGH specification shipped with Ghidra
+(`Ghidra/Processors/x86/data/languages/ia.sinc`, Apache 2.0) — cited in
+`src/pydasm/ghidra.py`, not copied.

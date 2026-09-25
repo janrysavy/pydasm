@@ -1,0 +1,10 @@
+# Keep the generated corpora out of diffs: they are machine output, regenerated
+# rather than edited, so a text diff of them is noise.
+tests/data/*.json -diff linguist-generated
+tests/data/nasm_cases.txt -diff linguist-generated
+tests/data/nasm_expected.txt -diff linguist-generated
+
+# The generated tables are checkable against their generators
+# (tests/test_generated_tables_match_source.py) but still generated.
+src/pydasm/_mnemonics.py linguist-generated
+src/pydasm/i808x/decode_table.py linguist-generated
