@@ -154,8 +154,9 @@ def analyse_frame(image: bytes, start: int, end: int) -> RoutineFrame:
     """Read a routine's frame from the bytes in `[start, end)`.
 
     The range must be exactly the routine: the epilogue is recognised as
-    `mov sp,bp` / `pop bp` / `ret`, and a range that runs past the routine's end
-    would pick up the next one's epilogue instead.
+    `mov sp,bp` / `pop bp` / `ret`, or just `pop bp` / `ret` when no local
+    allocation was observed. A range past the routine's end could pick up
+    the next one's epilogue instead.
 
     Raises nothing on undecodable bytes -- it stops and reports what it saw, so
     a routine with a data table inside it yields a short reading and a note
@@ -202,16 +203,22 @@ def analyse_frame(image: bytes, start: int, end: int) -> RoutineFrame:
         ):
             frame.frame_size = instruction.operand2_type.value
 
-        # Epilogue: `mov sp,bp` then `pop bp` then the return.
+        # TP6 omits `mov sp,bp` when the BP frame has no local allocation.
+        # An allocated frame still needs the observed SP reset before POP BP.
         if (
             mnemonic in ("RET", "RETF")
             and previous is not None
             and previous.mnemonic.name == "POP"
             and previous.operand1_type.value is Register16.BP
-            and before is not None
-            and before.mnemonic.name == "MOV"
-            and before.operand1_type.value is Register16.SP
-            and before.operand2_type.value is Register16.BP
+            and (
+                frame.frame_size in (None, 0)
+                or (
+                    before is not None
+                    and before.mnemonic.name == "MOV"
+                    and before.operand1_type.value is Register16.SP
+                    and before.operand2_type.value is Register16.BP
+                )
+            )
             and frame.has_bp_frame
         ):
             frame.return_discipline = "far" if mnemonic == "RETF" else "near"
@@ -261,7 +268,7 @@ def analyse_frame(image: bytes, start: int, end: int) -> RoutineFrame:
 
         # The argument run's end is the furthest *read*, not `base + pops`. On
         # this target a routine often reads further than it pops: `ret 4` with
-        # reads up to `[bp+0xa]` is a routine handed four words and popping one,
+        # reads up to `[bp+0xa]` is a routine handed four words and popping two,
         # which is what a caller-cleaned or partially-popped call looks like.
         # Taking `pops` as the extent truncates those to a single slot.
         read_end = max((offset + width for offset, width in positive.items()), default=base)
@@ -295,9 +302,9 @@ def analyse_frame(image: bytes, start: int, end: int) -> RoutineFrame:
             )
 
         # Reading past what the callee pops is a fact about the calling
-        # convention, and it is the kind a declaration cannot express: the
-        # routine is handed more than it removes, so the caller cleans up the
-        # rest. Recorded rather than smoothed -- and it belongs in `notes` even
+        # convention: the routine is handed more than it removes, so the caller
+        # owns the remaining stack area (for example a TP6 string-result buffer).
+        # Recorded rather than smoothed -- and it belongs in `notes` even
         # though the slots above are sized from the reads, because a reader
         # comparing `pops` against the argument count needs to see the mismatch.
         if read_end > base + frame.pops:
