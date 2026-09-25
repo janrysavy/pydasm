@@ -161,8 +161,11 @@ def analyse_frame(image: bytes, start: int, end: int) -> RoutineFrame:
     a routine with a data table inside it yields a short reading and a note
     rather than an exception.
     """
+    if not 0 <= start <= end <= len(image):
+        raise ValueError("routine range must satisfy 0 <= start <= end <= image size")
     frame = RoutineFrame(start=start, end=end)
-    reader = ByteReader(image)
+    # A partial final instruction must not consume the following routine.
+    reader = ByteReader(image[:end])
     position = start
 
     # Widest read seen per BP-relative offset, and the access width that implied.
@@ -202,8 +205,13 @@ def analyse_frame(image: bytes, start: int, end: int) -> RoutineFrame:
         # Epilogue: `mov sp,bp` then `pop bp` then the return.
         if (
             mnemonic in ("RET", "RETF")
-            and previous == "POP"
-            and before == "MOV"
+            and previous is not None
+            and previous.mnemonic.name == "POP"
+            and previous.operand1_type.value is Register16.BP
+            and before is not None
+            and before.mnemonic.name == "MOV"
+            and before.operand1_type.value is Register16.SP
+            and before.operand2_type.value is Register16.BP
             and frame.has_bp_frame
         ):
             frame.return_discipline = "far" if mnemonic == "RETF" else "near"
@@ -236,7 +244,7 @@ def analyse_frame(image: bytes, start: int, end: int) -> RoutineFrame:
         if mnemonic == "CALLF" and instruction.operand1_type.kind == "far16":
             far_calls.append(instruction.operand1_type.value)
 
-        before, previous = previous, mnemonic
+        before, previous = previous, instruction
         position += max(1, instruction.length)
 
     if stopped_early:
@@ -260,7 +268,8 @@ def analyse_frame(image: bytes, start: int, end: int) -> RoutineFrame:
         limit = max(base + frame.pops, read_end)
 
         boundaries = {base} | {offset for offset in positive if offset >= base}
-        starts = sorted(boundaries)
+        # In a parameterless routine base == limit: no slot exists there.
+        starts = sorted(offset for offset in boundaries if offset < limit)
         arguments = []
         for index, offset in enumerate(starts):
             next_start = starts[index + 1] if index + 1 < len(starts) else limit
@@ -335,7 +344,7 @@ def find_prologue_starts(image: bytes, pattern: bytes = b"\x55\x8b\xec") -> list
     while index != -1:
         starts.append(index)
         index = image.find(pattern, index + 1)
-    # `push bp` / `pop bp` / `push bp` / `mov bp,sp` is a different idiom.
+    # 89 E5 is the alternate encoding of MOV BP,SP (8B EC above).
     index = image.find(b"\x55\x89\xe5")
     while index != -1:
         starts.append(index)
