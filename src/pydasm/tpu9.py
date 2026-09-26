@@ -73,29 +73,41 @@ def procedure_spans(data: bytes) -> tuple[tuple[int, int], ...]:
     return tuple(sorted(spans))
 
 
-def primary_span(data: bytes) -> tuple[int, int]:
+def primary_span(data: bytes, *, code_offset: int | None = None) -> tuple[int, int]:
     """Earliest declared local entry and its exclusive, metadata-owned end.
 
+    A supplied code_offset selects that exact declared code-section-relative
+    entry, for example an enclosing routine emitted after its nested helpers.
+    Selection must be chosen before comparison, never by a matching byte scan.
     The spelling PUSH BP / MOV BP,SP is required at the entry itself. This does
     not infer names, select by a matching byte pattern, or choose a later entry
     because the first one failed a reconstruction comparison.
     """
     spans = procedure_spans(data)
+    if code_offset is not None:
+        if type(code_offset) is not int or code_offset < 0:
+            raise ValueError('TPU9 code offset must be a nonnegative integer')
+        selected = code_span(data)[0] + code_offset
+        spans = tuple(span for span in spans if span[0] == selected)
+        if not spans:
+            raise ValueError('TPU9 code offset is not a declared local entry')
     if spans:
         start, end = spans[0]
         if end - start >= len(PROLOGUE) and data[start:start + 3] == PROLOGUE:
             return start, end
-    raise ValueError('earliest declared TPU9 entry is not a BP-framed procedure')
+    label = 'earliest declared' if code_offset is None else 'selected declared'
+    raise ValueError(label + ' TPU9 entry is not a BP-framed procedure')
 
 
-def primary_routine(data: bytes) -> tuple[int, bytes]:
+def primary_routine(data: bytes, *, code_offset: int | None = None) -> tuple[int, bytes]:
     """Decode the primary BP entry through its first complete RET/RETF.
 
+    code_offset selects an explicit declared entry; None preserves the earliest.
     For controlled single-epilogue TP6 probes. This is NOT control-flow recovery
     for arbitrary assembly or multi-return functions. A missing return before
     the next entry/block is an error; adjacent carrier code cannot complete it.
     """
-    start, limit = primary_span(data)
+    start, limit = primary_span(data, code_offset=code_offset)
     code = data[start:limit]
     decoder = Decoder(code, DecoderOptions())
     position = 0
