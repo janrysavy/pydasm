@@ -41,3 +41,11 @@ def test_explicit_selection_does_not_fall_back_after_invalid_entry():
     data = tpu([b'\x90' + FAR], [(0, 0), (0, 1)])
     with pytest.raises(ValueError, match='BP-framed'):
         primary_routine(data, code_offset=0)
+
+
+def test_external_object_entry_can_prepare_segments_before_its_bp_frame():
+    body = bytes.fromhex('fc 8c da 55 8b ec 5d ca 0a 00')
+    data = tpu([body], [(0, 0)])
+    with pytest.raises(ValueError, match='BP-framed'):
+        primary_routine(data)
+    assert primary_routine(data, require_prologue=False)[1] == body

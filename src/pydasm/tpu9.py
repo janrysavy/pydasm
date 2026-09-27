@@ -73,15 +73,17 @@ def procedure_spans(data: bytes) -> tuple[tuple[int, int], ...]:
     return tuple(sorted(spans))
 
 
-def primary_span(data: bytes, *, code_offset: int | None = None) -> tuple[int, int]:
+def primary_span(data: bytes, *, code_offset: int | None = None,
+                 require_prologue: bool = True) -> tuple[int, int]:
     """Earliest declared local entry and its exclusive, metadata-owned end.
 
     A supplied code_offset selects that exact declared code-section-relative
     entry, for example an enclosing routine emitted after its nested helpers.
     Selection must be chosen before comparison, never by a matching byte scan.
-    The spelling PUSH BP / MOV BP,SP is required at the entry itself. This does
-    not infer names, select by a matching byte pattern, or choose a later entry
-    because the first one failed a reconstruction comparison.
+    Ordinary compiler procedures require PUSH BP / MOV BP,SP at the entry.
+    Declared external-object procedures may opt out: their assembly can establish
+    a frame after segment setup. Selection still uses TPU metadata, never a
+    matching byte scan or a later entry chosen by comparison.
     """
     spans = procedure_spans(data)
     if code_offset is not None:
@@ -93,21 +95,25 @@ def primary_span(data: bytes, *, code_offset: int | None = None) -> tuple[int, i
             raise ValueError('TPU9 code offset is not a declared local entry')
     if spans:
         start, end = spans[0]
-        if end - start >= len(PROLOGUE) and data[start:start + 3] == PROLOGUE:
+        if not require_prologue or (end - start >= len(PROLOGUE)
+                                    and data[start:start + 3] == PROLOGUE):
             return start, end
     label = 'earliest declared' if code_offset is None else 'selected declared'
     raise ValueError(label + ' TPU9 entry is not a BP-framed procedure')
 
 
-def primary_routine(data: bytes, *, code_offset: int | None = None) -> tuple[int, bytes]:
-    """Decode the primary BP entry through its first complete RET/RETF.
+def primary_routine(data: bytes, *, code_offset: int | None = None,
+                    require_prologue: bool = True) -> tuple[int, bytes]:
+    """Decode the primary declared entry through its first complete RET/RETF.
 
     code_offset selects an explicit declared entry; None preserves the earliest.
-    For controlled single-epilogue TP6 probes. This is NOT control-flow recovery
+    For controlled single-epilogue TP6 probes. A non-BP entry requires an explicit
+    opt-out, intended for externally assembled code. This is NOT control-flow recovery
     for arbitrary assembly or multi-return functions. A missing return before
     the next entry/block is an error; adjacent carrier code cannot complete it.
     """
-    start, limit = primary_span(data, code_offset=code_offset)
+    start, limit = primary_span(data, code_offset=code_offset,
+                                require_prologue=require_prologue)
     code = data[start:limit]
     decoder = Decoder(code, DecoderOptions())
     position = 0
