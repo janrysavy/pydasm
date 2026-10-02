@@ -368,7 +368,7 @@ def _render_operand(instruction: Instruction, operand: OperandType, address: int
     raise DecodeError(f"cannot render operand kind {kind!r}")
 
 
-def _effective_operands(instruction: Instruction) -> list[OperandType]:
+def _effective_operands(instruction: Instruction, *, preserve_operand_order: bool = False) -> list[OperandType]:
     """The operands as Ghidra orders and completes them.
 
     Four adjustments to what the decode table resolved:
@@ -392,9 +392,9 @@ def _effective_operands(instruction: Instruction) -> list[OperandType]:
     if instruction.mnemonic is Mnemonic.NOP:
         return []
 
-    if instruction.mnemonic in _XCHG_MNEMONICS:
+    if not preserve_operand_order and instruction.mnemonic in _XCHG_MNEMONICS:
         operands.reverse()
-    elif opcode == 0x8E and len(operands) == 2 and not operands[1].is_memory():
+    elif not preserve_operand_order and opcode == 0x8E and len(operands) == 2 and not operands[1].is_memory():
         # `MOV Sreg, r16` prints register-first, `MOV Sreg, m16` does not: Ghidra
         # keeps the memory operand last in both directions of the move, so only
         # the register-to-register form reads "backwards".
@@ -409,12 +409,12 @@ def _effective_operands(instruction: Instruction) -> list[OperandType]:
     return operands
 
 
-def render_operands(instruction: Instruction, address: int) -> str:
+def render_operands(instruction: Instruction, address: int, *, preserve_operand_order: bool = False) -> str:
     """The operand column for one instruction, without the leading separator."""
     if instruction.mnemonic in _STRING_OPS:
         return _string_operands(instruction)
 
-    operands = _effective_operands(instruction)
+    operands = _effective_operands(instruction, preserve_operand_order=preserve_operand_order)
     if not operands:
         return ""
 
@@ -430,8 +430,13 @@ def render_bytes(instruction: Instruction) -> str:
     return " ".join(f"{byte:02X}" for byte in instruction.instruction_bytes)
 
 
-def render_body(instruction: Instruction, address: int) -> str:
-    """The listing body: padded mnemonic plus operands, with no address."""
+def render_body(instruction: Instruction, address: int, *, preserve_operand_order: bool = False) -> str:
+    """The listing body, optionally retaining decoded destination/source order.
+
+    The default reproduces the historical exporter, including its reversed
+    register-to-segment MOV operands. Opt in for semantic comparisons while
+    keeping segment prefixes, implied shift counts and address rendering.
+    """
     if not instruction.is_valid or not instruction.is_complete:
         return ""
     # The mnemonic is padded to the column and the operands follow immediately,
@@ -441,7 +446,7 @@ def render_body(instruction: Instruction, address: int) -> str:
     # A REP-suffixed mnemonic (`MOVSB.REP`, nine characters) fills the field
     # exactly, so the operands need the separator back or they run into it.
     mnemonic = ghidra_mnemonic(instruction)
-    operands = render_operands(instruction, address)
+    operands = render_operands(instruction, address, preserve_operand_order=preserve_operand_order)
     if operands and len(mnemonic) >= MNEMONIC_COLUMN:
         return f"{mnemonic} {operands}"
     return f"{mnemonic:<{MNEMONIC_COLUMN}}{operands}"

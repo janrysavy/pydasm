@@ -19,6 +19,12 @@ address. The one thing it does not do is *find* code -- see
 Both are exact, not approximate. See **Verification** below for what that means
 and how to reproduce it.
 
+For semantic instruction comparisons, `pydasm.ghidra.render_body(ins, address,
+preserve_operand_order=True)` retains decoded destination/source order. This
+correctly displays register-to-segment `MOV` (for example `8E C0` is `MOV ES, AX`)
+while retaining segment prefixes and implied shift counts. The default remains
+compatible with historical Ghidra exports.
+
 ## Install
 
 No dependencies beyond the standard library. Python 3.11 or newer (the decoder
