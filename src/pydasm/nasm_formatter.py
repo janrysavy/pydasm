@@ -1,6 +1,6 @@
 """marty_dasm's own NASM-style formatter.
 
-A faithful port of `formatter/nasm_formatter.rs`. Where the Ghidra renderer
+A port of `formatter/nasm_formatter.rs`. Where the Ghidra renderer
 (`pydasm.ghidra`) exists to reproduce another tool's output exactly, this one
 reproduces the reference implementation's own house style: lowercase mnemonics,
 `word`/`byte` size qualifiers from marty_dasm's own disambiguation rules,
@@ -12,6 +12,10 @@ the 8088 does not have, and `Instruction.disambiguate` is only set by the 386
 decoder. The code is kept because the two renderers share an operand model and
 a port that silently dropped the branches would be harder to extend to the 386
 than one that keeps them.
+
+Default output preserves segment, REP and LOCK prefix semantics from the
+recorded bytes. `legacy_prefixes=True` reproduces the reference formatter's
+prefix omissions for historical corpus comparisons only.
 """
 
 from __future__ import annotations
@@ -62,6 +66,32 @@ class FormatOptions:
     mnemonic_only: bool = False
     #: Show the size of memory operands, e.g. `mov al,[dword ds:5F976B58h]`.
     memory_operand_size: bool = True
+    #: Reproduce marty_dasm's omitted 8086 prefixes for reference comparisons.
+    legacy_prefixes: bool = False
+
+
+_SEGMENT_PREFIXES = {
+    0x26: Register16.ES, 0x2E: Register16.CS,
+    0x36: Register16.SS, 0x3E: Register16.DS,
+    0x64: Register16.FS, 0x65: Register16.GS,
+}
+
+
+def _prefix_state(instruction: Instruction, opts: FormatOptions) -> tuple[Optional[Register16], int, int]:
+    """Do not mutate the reference-compatible decoded instruction record."""
+    segment = instruction.segment_override
+    raw = instruction.raw_prefix_flags
+    effective = instruction.effective_prefix_flags
+    if not opts.legacy_prefixes:
+        for byte in instruction.prefix_bytes:
+            if byte in _SEGMENT_PREFIXES:
+                segment = _SEGMENT_PREFIXES[byte]
+            elif byte == 0xF0:
+                raw |= PrefixFlags.LOCK
+            elif byte in (0xF2, 0xF3):
+                repeat = PrefixFlags.REP1 if byte == 0xF2 else PrefixFlags.REP2
+                effective = (effective & ~PrefixFlags.REP_MASK) | repeat
+    return segment, raw, effective
 
 
 class TokenStream:
@@ -179,6 +209,7 @@ class NasmFormatter:
     # -- prefixes -------------------------------------------------------
 
     def format_prefixes(self, instruction: Instruction, opts: FormatOptions, out) -> None:
+        segment, raw, effective = _prefix_state(instruction, opts)
         if (
             instruction.has_address_size_override()
             and not self._operands_will_disambiguate_address_size(instruction)
@@ -194,7 +225,8 @@ class NasmFormatter:
 
         self.format_operand_size_disambiguation(instruction, opts, out)
 
-        if instruction.effective_prefix_flags & PrefixFlags.SEG_OVERRIDE_MASK:
+        has_segment = bool(effective & PrefixFlags.SEG_OVERRIDE_MASK) if opts.legacy_prefixes else segment is not None
+        if has_segment:
             # A string operation's segment override is part of its operand, so
             # it is written with the operand rather than as a prefix. STOS, SCAS
             # and INS only ever touch ES, which cannot be overridden.
@@ -205,19 +237,18 @@ class NasmFormatter:
                 and not is_scas(instruction.mnemonic)
                 and not is_ins(instruction.mnemonic)
             ):
-                segment = instruction.segment_override
-                if segment is not None and segment is not Register16.DS:
+                if segment is not None and (not opts.legacy_prefixes or segment is not Register16.DS):
                     out.write_prefix(str(segment).lower())
                     out.write_separator(" ")
 
-        if instruction.raw_prefix_flags & PrefixFlags.LOCK:
+        if raw & PrefixFlags.LOCK:
             out.write_prefix("lock")
             out.write_separator(" ")
 
-        if is_string_op(instruction.mnemonic) and (instruction.effective_prefix_flags & PrefixFlags.REP_MASK):
-            if instruction.effective_prefix_flags & PrefixFlags.REP1:
+        if is_string_op(instruction.mnemonic) and (effective & PrefixFlags.REP_MASK):
+            if effective & PrefixFlags.REP1:
                 out.write_prefix(rep1_prefix(instruction.mnemonic))
-            elif instruction.effective_prefix_flags & PrefixFlags.REP2:
+            elif effective & PrefixFlags.REP2:
                 out.write_prefix(rep2_prefix(instruction.mnemonic))
             out.write_separator(" ")
 
@@ -245,17 +276,18 @@ class NasmFormatter:
         return False
 
     def format_operands(self, instruction: Instruction, opts: FormatOptions, out) -> None:
+        segment, _, _ = _prefix_state(instruction, opts)
         self.format_memory_disambiguation(instruction, opts, instruction.operand1_type, out)
-        self.format_operand(instruction, instruction.operand1_type, instruction.segment_override, opts, out)
+        self.format_operand(instruction, instruction.operand1_type, segment, opts, out)
 
         if instruction.operand2_type is not NO_OPERAND:
             out.write_separator(",")
         self.format_memory_disambiguation(instruction, opts, instruction.operand2_type, out)
-        self.format_operand(instruction, instruction.operand2_type, instruction.segment_override, opts, out)
+        self.format_operand(instruction, instruction.operand2_type, segment, opts, out)
 
         if instruction.operand3_type is not NO_OPERAND:
             out.write_separator(",")
-        self.format_operand(instruction, instruction.operand3_type, instruction.segment_override, opts, out)
+        self.format_operand(instruction, instruction.operand3_type, segment, opts, out)
 
     def format_instruction(self, instruction: Instruction, opts: Optional[FormatOptions] = None, out=None) -> str:
         """Render one instruction. Returns the text, or writes it to `out`."""
