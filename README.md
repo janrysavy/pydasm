@@ -9,15 +9,28 @@ operand resolution. On top of it sit two renderers:
 | Renderer | Purpose | Verified against |
 | --- | --- | --- |
 | `pydasm.ghidra` | a byte-anchored Ghidra listing format | 29,525 lines of real Ghidra output |
-| `pydasm.nasm_formatter` | marty_dasm's own NASM style | 23,418 cases from the reference Rust crate |
+| `pydasm.nasm_formatter` | NASM style with semantic prefix preservation; explicit reference mode | 23,418 reference cases plus prefix/CLI controls |
 
 It runs with no Java and no Ghidra, which is the point: the decode and the
 formatting are deterministic functions of the image bytes and a caller-supplied
 address. The one thing it does not do is *find* code -- see
 [Coverage](#coverage-and-its-limit).
 
-Both are exact, not approximate. See **Verification** below for what that means
-and how to reproduce it.
+Historical output comparisons are exact in their documented compatibility modes.
+See **Verification** below for what that means and how to reproduce it.
+
+Default NASM output reads segment, REP and LOCK prefixes from the recorded
+bytes, even though the reference-compatible 8086 decoder leaves its derived
+prefix fields empty. For example, `36 C4 7F 08` renders as `les di,[ss:bx+8]`,
+not a DS access. The last segment/repeat prefix wins; STOS/SCAS retain fixed ES
+destinations. Formatting never mutates the decoded instruction. Prefix order,
+ignored prefixes and other encoding choices may normalize: this is not a
+general byte-exact assembler round trip.
+
+Only when reproducing the old Rust formatter, use
+`FormatOptions(legacy_prefixes=True)`. This retains its known prefix omissions;
+do not use that mode to generate assembly for execution. CLI `--nasm` uses the
+safe default.
 
 For semantic instruction comparisons, `pydasm.ghidra.render_body(ins, address,
 preserve_operand_order=True)` retains decoded destination/source order. This
@@ -168,7 +181,7 @@ against a reading of their documentation.
 | **AMD D8088 hardware recordings** | **2,411,530 lengths + 379,245 targets + 590,109 addresses** | **0 mismatches** |
 | **Intel P80C86A hardware recordings** | **527,128 lengths + 75,845 targets + 167,887 addresses** | **0 mismatches** |
 | Ghidra listing, whole lines | 29,525 | exact |
-| NASM style, against the Rust crate | 23,418 | exact |
+| NASM reference mode, against the Rust crate | 23,418 | exact |
 | Decode table vs. the Rust source | 352 rows | exact |
 | Mnemonic enum vs. the Rust source | 209 variants | exact |
 
@@ -283,9 +296,9 @@ their call sites:
 * **Prefix flags are not stored.** marty_dasm's 8086 decoder tracks
   `raw_prefix_flags`, `effective_prefix_flags` and `segment_override` in locals
   and never assigns them to the instruction -- only its 386 decoder does. The
-  port mirrors that, so the NASM formatter drops prefixes exactly as the
-  reference does. The Ghidra renderer derives what it needs from
-  `prefix_bytes`, which is populated.
+  port mirrors that record layout. Both renderers derive the needed semantics
+  from populated `prefix_bytes`; NASM's explicit `legacy_prefixes` option
+  retains the reference omissions for the frozen corpus test.
 
 * **`AddressOffset16` is a tagged record, not an enum.** In Rust it is an enum
   whose variants carry data; Python enums cannot, so it is a small frozen

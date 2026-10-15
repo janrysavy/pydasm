@@ -97,8 +97,8 @@ def _decode(reader: ByteReader, instruction: Instruction) -> Instruction:
     # because marty_dasm's 8086 decoder does not -- it tracks them in locals for
     # the prefix loop and never stores them, unlike the 386 decoder which does.
     # A caller that needs the override or the REP family reads `prefix_bytes`;
-    # `pydasm.ghidra` does exactly that. Storing them here instead would make the
-    # NASM formatter print prefixes that the reference implementation drops.
+    # Both renderers do that by default. NASM's explicit legacy_prefixes option
+    # reproduces the reference formatter's omissions for corpus comparisons.
 
     # -- step 2: opcode lookup, with the group re-index -------------------
     row = DECODE[opcode]

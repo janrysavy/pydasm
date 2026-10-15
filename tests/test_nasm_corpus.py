@@ -73,7 +73,9 @@ def test_nasm_formatting_matches_the_reference_implementation():
         expected_length, _, expected_text = expected.partition("\t")
         assert instruction.length == int(expected_length), f"{case}: instruction length"
 
-        ours = formatter.format_instruction(instruction, FormatOptions(ip=ip))
+        # Preserve the captured reference's known 8086 prefix omissions here;
+        # default semantic rendering has separate instruction/assembler controls.
+        ours = formatter.format_instruction(instruction, FormatOptions(ip=ip, legacy_prefixes=True))
         if ours != expected_text:
             mismatches.append((case, expected_text, ours))
 
