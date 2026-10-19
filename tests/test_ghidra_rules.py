@@ -74,6 +74,27 @@ def test_forward_near_branch():
     assert body(bytes([0x75, 0x08]), 0x238B8) == "JNZ      0x2000:38c2"
 
 
+@pytest.mark.parametrize("encoding,address,segment,expected", [
+    ("ebfc", 0x10000, 0x0F94, "JMP      0x0f94:06be"),
+    ("e8fcff", 0x10000, 0x0F94, "CALL     0x0f94:06bf"),
+    ("7501", 0x10000, 0x0F94, "JNZ      0x0f94:06c3"),
+    ("e2fe", 0x10000, 0x0F94, "LOOP     0x0f94:06c0"),
+    ("eb02", 0x1F93C, 0x0F94, "JMP      0x0f94:0000"),
+    ("e9feff", 0x0F940, 0x0F94, "JMP      0x0f94:0001"),
+    ("9afb029a12", 0x10000, 0x0F94, "CALLF    0x1000:2c9b"),
+])
+def test_explicit_code_segment_preserves_real_ip_wrap(encoding,address,segment,expected):
+    instruction = decode_one(bytes.fromhex(encoding), DecoderOptions())
+    assert render_body(instruction,address,code_segment=segment).rstrip() == expected
+
+
+@pytest.mark.parametrize("address,segment", [(0,-1),(0,65536),(0,True),(0x10000,0),(0,0x1000)])
+def test_explicit_code_segment_refuses_invalid_context(address,segment):
+    instruction = decode_one(bytes.fromhex('90'), DecoderOptions())
+    with pytest.raises(ValueError,match='code.segment'):
+        render_body(instruction,address,code_segment=segment)
+
+
 # -- number formatting ---------------------------------------------------
 
 

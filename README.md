@@ -38,6 +38,14 @@ correctly displays register-to-segment `MOV` (for example `8E C0` is `MOV ES, AX
 while retaining segment prefixes and implied shift counts. The default remains
 compatible with historical Ghidra exports.
 
+When the actual code segment is known, pass `code_segment=cs` to `render_body`
+or `render_operands`. Near branches then wrap IP inside that CS, including a
+segment that crosses a normalized 64 KiB boundary. `address` is the linear
+instruction address in the same address space as `cs << 4`; inconsistent or
+invalid segment contexts raise `ValueError`. For example, `EB FC` at linear
+`0x10000` in CS `0x0F94` targets `0x0f94:06be`. Far pointers retain their
+normalized representation. Omitting the option preserves historical output.
+
 ## Install
 
 No dependencies beyond the standard library. Python 3.11 or newer (the decoder
