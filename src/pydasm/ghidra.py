@@ -323,7 +323,8 @@ def _immediate_value(instruction: Instruction, value: int) -> int:
     return value & 0xFF
 
 
-def _render_operand(instruction: Instruction, operand: OperandType, address: int, with_size: bool) -> str:
+def _render_operand(instruction: Instruction, operand: OperandType, address: int, with_size: bool,
+                    code_segment: int | None = None) -> str:
     kind = operand.kind
 
     if kind in ("reg8", "reg16", "reg32", "creg", "dreg", "treg"):
@@ -340,8 +341,8 @@ def _render_operand(instruction: Instruction, operand: OperandType, address: int
         # whole thing as a linear address and re-normalising would push a
         # backward branch near the segment base into segment 0 -- `1000:494c
         # CALL 0x1000:f807`, not `0x0000:f807`.
-        segment = (address >> 4) & 0xF000
-        offset = (address & 0xFFFF) + instruction.length + operand.value
+        segment = (address >> 4) & 0xF000 if code_segment is None else code_segment
+        offset = address - (segment << 4) + instruction.length + operand.value
         return f"0x{segment:04x}:{offset & 0xFFFF:04x}"
 
     if kind == "far16":
@@ -409,8 +410,14 @@ def _effective_operands(instruction: Instruction, *, preserve_operand_order: boo
     return operands
 
 
-def render_operands(instruction: Instruction, address: int, *, preserve_operand_order: bool = False) -> str:
+def render_operands(instruction: Instruction, address: int, *, preserve_operand_order: bool = False,
+                    code_segment: int | None = None) -> str:
     """The operand column for one instruction, without the leading separator."""
+    if code_segment is not None:
+        if type(code_segment) is not int or not 0 <= code_segment <= 0xFFFF:
+            raise ValueError('code_segment must be a 16-bit paragraph segment')
+        if not 0 <= address - (code_segment << 4) <= 0xFFFF:
+            raise ValueError('code_segment does not contain the instruction address')
     if instruction.mnemonic in _STRING_OPS:
         return _string_operands(instruction)
 
@@ -422,7 +429,7 @@ def render_operands(instruction: Instruction, address: int, *, preserve_operand_
     parts = []
     for operand in operands:
         with_size = operand.is_memory() and not supplies
-        parts.append(_render_operand(instruction, operand, address, with_size))
+        parts.append(_render_operand(instruction, operand, address, with_size, code_segment))
     return ", ".join(parts)
 
 
@@ -430,12 +437,16 @@ def render_bytes(instruction: Instruction) -> str:
     return " ".join(f"{byte:02X}" for byte in instruction.instruction_bytes)
 
 
-def render_body(instruction: Instruction, address: int, *, preserve_operand_order: bool = False) -> str:
+def render_body(instruction: Instruction, address: int, *, preserve_operand_order: bool = False,
+                code_segment: int | None = None) -> str:
     """The listing body, optionally retaining decoded destination/source order.
 
     The default reproduces the historical exporter, including its reversed
     register-to-segment MOV operands. Opt in for semantic comparisons while
     keeping segment prefixes, implied shift counts and address rendering.
+    With code_segment, near targets use that actual CS and wrap its IP at64KiB;
+    address must be linear within that segment. The default retains normalized
+    Ghidra addresses. Absolute far-pointer rendering is unchanged.
     """
     if not instruction.is_valid or not instruction.is_complete:
         return ""
@@ -446,7 +457,8 @@ def render_body(instruction: Instruction, address: int, *, preserve_operand_orde
     # A REP-suffixed mnemonic (`MOVSB.REP`, nine characters) fills the field
     # exactly, so the operands need the separator back or they run into it.
     mnemonic = ghidra_mnemonic(instruction)
-    operands = render_operands(instruction, address, preserve_operand_order=preserve_operand_order)
+    operands = render_operands(instruction, address, preserve_operand_order=preserve_operand_order,
+                               code_segment=code_segment)
     if operands and len(mnemonic) >= MNEMONIC_COLUMN:
         return f"{mnemonic} {operands}"
     return f"{mnemonic:<{MNEMONIC_COLUMN}}{operands}"
